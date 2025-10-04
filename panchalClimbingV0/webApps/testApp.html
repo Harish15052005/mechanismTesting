@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Robot Controller</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      margin-top: 20px;
+    }
+    button {
+      width: 80px;
+      height: 80px;
+      font-size: 20px;
+      margin: 5px;
+      border-radius: 15px;
+    }
+    .btn-grid {
+      display: inline-grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5px;
+      margin: 20px auto;
+    }
+    input[type=range] {
+      width: 80%;
+    }
+  </style>
+</head>
+<body>
+  <h2>Robot Controller</h2>
+  <p id="status">Connecting...</p>
+
+  <div class="btn-grid">
+    <div></div>
+    <button id="up">↑</button>
+    <div></div>
+    <button id="left">←</button>
+    <div></div>
+    <button id="right">→</button>
+    <div></div>
+    <button id="down">↓</button>
+    <div></div>
+  </div>
+
+  <div>
+    <label>AUX1: <span id="aux1Val">0</span></label><br>
+    <input type="range" id="aux1" min="-500" max="500" value="0">
+  </div><br>
+
+  <div>
+    <label>AUX2: <span id="aux2Val">0</span></label><br>
+    <input type="range" id="aux2" min="-500" max="500" value="0">
+  </div>
+
+  <div>
+    <h3>Telemetry</h3>
+    <p>Encoder1: <span id="enc1">0</span></p>
+    <p>Encoder2: <span id="enc2">0</span></p>
+</div>
+
+  <script>
+    const broker = "ws://192.168.0.127:9001";
+    const topic = "robot/commands";
+    const client = mqtt.connect(broker);
+
+    let buttons = { up:0, down:0, left:0, right:0 };
+    let aux1 = 0, aux2 = 0;
+
+    const status = document.getElementById("status");
+    client.on("connect", () => status.textContent = "✅ Connected to MQTT broker");
+    client.on("error", err => status.textContent = "❌ " + err.message);
+
+    client.on("message", (topic, message) => {
+        if(topic === "robot/telem" && message.length === 4) {
+        const view = new DataView(message.buffer);
+        const e1 = view.getInt16(0, true); // little-endian
+        const e2 = view.getInt16(2, true);
+        document.getElementById("enc1").textContent = e1;
+        document.getElementById("enc2").textContent = e2;
+        }
+    });
+
+    function sendPacket() {
+      const p = new Uint8Array(7);
+      p[0] = 0xAA;
+      p[1] = (buttons.up ? 1<<0 : 0) |
+             (buttons.down ? 1<<1 : 0) |
+             (buttons.left ? 1<<2 : 0) |
+             (buttons.right ? 1<<3 : 0);
+      p[2] = aux1 & 0xFF;
+      p[3] = (aux1 >> 8) & 0xFF;
+      p[4] = aux2 & 0xFF;
+      p[5] = (aux2 >> 8) & 0xFF;
+      p[6] = p[0]^p[1]^p[2]^p[3]^p[4]^p[5];
+      client.publish(topic, p);
+    }
+
+    // Touch + mouse controls for each button
+    function setupButton(id, key) {
+      const b = document.getElementById(id);
+      const press = () => { buttons[key] = 1; sendPacket(); };
+      const release = () => { buttons[key] = 0; sendPacket(); };
+      b.addEventListener("mousedown", press);
+      b.addEventListener("mouseup", release);
+      b.addEventListener("mouseleave", release);
+      b.addEventListener("touchstart", e => { e.preventDefault(); press(); });
+      b.addEventListener("touchend", e => { e.preventDefault(); release(); });
+    }
+    setupButton("up", "up");
+    setupButton("down", "down");
+    setupButton("left", "left");
+    setupButton("right", "right");
+
+    // Sliders
+    const s1 = document.getElementById("aux1");
+    const s2 = document.getElementById("aux2");
+    s1.oninput = () => { aux1 = parseInt(s1.value); document.getElementById("aux1Val").textContent = aux1; sendPacket(); };
+    s2.oninput = () => { aux2 = parseInt(s2.value); document.getElementById("aux2Val").textContent = aux2; sendPacket(); };
+  </script>
+</body>
+</html>
